@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -25,3 +27,9 @@ jobs:
         with:
           name: zhkh-kv187-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish APK as a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk ZHKH-kv187.apk
+          gh release create "apk-${{ github.run_number }}" ZHKH-kv187.apk --title "ЖКХ кв-187 APK (сборка ${{ github.run_number }})" --notes "Скачайте ZHKH-kv187.apk и установите на смартфон." --target "${{ github.sha }}"
