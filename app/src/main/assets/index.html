@@ -270,7 +270,7 @@ table.tb{border-collapse:collapse;min-width:600px;width:100%;font-size:13px}
 (function(){
 'use strict';
 var STORE='zhkh-kv187-v1';
-var KEYS=['hk','gk','ht','gt','ed','en'];
+var KEYS=['hk','gt','ht','gk','ed','en']; /* порядок показа: кухня (ХВС, ГВС), туалет (ХВС, ГВС), свет */
 var LABEL={hk:'ХВС кухня',gk:'ГВС туалет',ht:'ХВС туалет',gt:'ГВС кухня',ed:'Э/Э день',en:'Э/Э ночь'};
 var UNIT={hk:'м³',gk:'м³',ht:'м³',gt:'м³',ed:'кВт·ч',en:'кВт·ч'};
 var MN=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -295,7 +295,7 @@ var CUR={
 };
 function defaults(){
   var m={};
-  Object.keys(CUR).forEach(function(k){var c={};KEYS.forEach(function(x,i){c[x]=CUR[k][i]});m[k]={cur:c}});
+  Object.keys(CUR).forEach(function(k){var c={};['hk','gk','ht','gt','ed','en'].forEach(function(x,i){c[x]=CUR[k][i]});m[k]={cur:c}});
   m['2026-01'].prev={hk:115.708,gk:241.229,ht:483.614,gt:142.832,ed:1465,en:548};
   return {ver:[{from:'2026-01',hvs:32.26,vod:23.77,t1:8.24,t2:3.54},{from:'2026-10',hvs:37.73,vod:27.82,t1:9.63,t2:4.33}],m:m};
 }
