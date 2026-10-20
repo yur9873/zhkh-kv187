@@ -271,7 +271,7 @@ table.tb{border-collapse:collapse;min-width:600px;width:100%;font-size:13px}
 'use strict';
 var STORE='zhkh-kv187-v1';
 var KEYS=['hk','gk','ht','gt','ed','en'];
-var LABEL={hk:'ХВС кухня',gk:'ГВС кухня',ht:'ХВС туалет',gt:'ГВС туалет',ed:'Э/Э день',en:'Э/Э ночь'};
+var LABEL={hk:'ХВС кухня',gk:'ГВС туалет',ht:'ХВС туалет',gt:'ГВС кухня',ed:'Э/Э день',en:'Э/Э ночь'};
 var UNIT={hk:'м³',gk:'м³',ht:'м³',gt:'м³',ed:'кВт·ч',en:'кВт·ч'};
 var MN=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 var MG=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
@@ -467,7 +467,7 @@ function drawChart(){
     ['Водоотв.','--c-vod',function(r){return r.cat.vod}],['Свет','--c-ee',function(r){return r.cat.ee}]]}
   else if(cmode==='wat'){unit='м³';dec=2;defs=[
     ['ХВС кухня','--c-hvs',function(r){return r.vol.hk}],['ХВС туалет','--c-hvs2',function(r){return r.vol.ht}],
-    ['ГВС кухня','--c-gvs',function(r){return r.vol.gk}],['ГВС туалет','--c-gvs2',function(r){return r.vol.gt}]]}
+    ['ГВС туалет','--c-gvs',function(r){return r.vol.gk}],['ГВС кухня','--c-gvs2',function(r){return r.vol.gt}]]}
   else{unit='кВт·ч';dec=0;defs=[
     ['День','--c-ee',function(r){return r.vol.ed}],['Ночь','--c-night',function(r){return r.vol.en}]]}
   var cw=$('cw');
