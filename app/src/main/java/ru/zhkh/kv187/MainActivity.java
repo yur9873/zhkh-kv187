@@ -6,6 +6,9 @@ import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -20,6 +23,15 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
+
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -36,6 +48,7 @@ public class MainActivity extends Activity {
     private Uri cameraUri;
     private PermissionRequest pendingWebPerm;
     private Runnable afterCamPerm;
+    private TextRecognizer recognizer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -251,8 +264,63 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** Вызывается из страницы: сохраняет копию данных в папку «Загрузки». */
+
+    /** Результат распознавания возвращается в страницу: window.__ocrDone(id, {lines:[...]}) */
+    private void deliver(final String id, final String json) {
+        if (id == null || !id.matches("[0-9]{1,9}")) return;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                web.evaluateJavascript("window.__ocrDone('" + id + "'," + json + ")", null);
+            }
+        });
+    }
+
+    /** Мост для страницы: сохранение копии в «Загрузки» и распознавание фото. */
     public class Bridge {
+        @JavascriptInterface
+        public void ocr(String base64, final String id) {
+            try {
+                byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+                Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                if (bmp == null) {
+                    deliver(id, "{\"error\":\"decode\"}");
+                    return;
+                }
+                if (recognizer == null) {
+                    recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+                }
+                recognizer.process(InputImage.fromBitmap(bmp, 0))
+                        .addOnSuccessListener(text -> {
+                            try {
+                                JSONArray lines = new JSONArray();
+                                for (Text.TextBlock block : text.getTextBlocks()) {
+                                    for (Text.Line line : block.getLines()) {
+                                        JSONObject o = new JSONObject();
+                                        o.put("t", line.getText());
+                                        Rect r = line.getBoundingBox();
+                                        if (r != null) {
+                                            o.put("x", r.left);
+                                            o.put("y", r.top);
+                                            o.put("w", r.width());
+                                            o.put("h", r.height());
+                                        }
+                                        lines.put(o);
+                                    }
+                                }
+                                JSONObject res = new JSONObject();
+                                res.put("lines", lines);
+                                deliver(id, res.toString());
+                            } catch (Exception e) {
+                                deliver(id, "{\"error\":\"parse\"}");
+                            }
+                        })
+                        .addOnFailureListener(e -> deliver(id, "{\"error\":\"ocr\"}"));
+            } catch (Throwable t) {
+                deliver(id, "{\"error\":\"fail\"}");
+            }
+        }
+
         @JavascriptInterface
         public void save(String name, String mime, String base64) {
             try {

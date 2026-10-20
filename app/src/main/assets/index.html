@@ -229,9 +229,13 @@ table.tb{border-collapse:collapse;min-width:600px;width:100%;font-size:13px}
   </section>
 
   <section id="s-tb" hidden>
+    <div class="seg" id="tbseg">
+      <button type="button" data-tb="data" aria-pressed="true">Табл. Данн</button>
+      <button type="button" data-tb="avg" aria-pressed="false">Средний расход</button>
+    </div>
     <h3 class="tt" id="tbt"></h3>
     <div class="tw" id="tw"></div>
-    <div class="note">Итого и среднее считаются по месяцам с внесёнными показаниями. Выбранный месяц подсвечен.</div>
+    <div class="note" id="tbn"></div>
   </section>
 
   <section id="s-tf" hidden>
@@ -504,7 +508,33 @@ function drawChart(){
 }
 
 /* ---------- таблица за год ---------- */
+var tbmode='data';
 function renderTable(){
+  document.querySelectorAll('#tbseg button').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.tb===tbmode)});
+  if(tbmode==='avg'){
+    renderAvgTable();
+    $('tbn').textContent='Итого и среднее считаются по месяцам с внесёнными показаниями. Выбранный месяц подсвечен.';
+  }else{
+    renderDataTable();
+    $('tbn').textContent='Показания «Стало», внесённые за год вручную или по фото. Выбранный месяц подсвечен.';
+  }
+}
+function renderDataTable(){
+  var y=pk(sel).y,body='',i,n=0;
+  for(i=0;i<12;i++){
+    var key=mk(y,i),m=S.m[key],c=(m&&m.cur)||{},has=KEYS.some(function(k){return c[k]!=null}),cells='';
+    if(has)n++;
+    var dt=has?((m&&m.date)||key+'-20').split('-').reverse().join('.'):'';
+    KEYS.forEach(function(k){
+      cells+=c[k]==null?'<td class="e">—</td>':'<td>'+nf(c[k],UNIT[k]==='м³'?3:0)+'</td>';
+    });
+    body+='<tr'+(key===sel?' class="cur"':'')+'><td>'+MN[i]+'</td><td'+(has?'':' class="e"')+'>'+(has?dt:'—')+'</td>'+cells+'</tr>';
+  }
+  var head='<tr><th>Месяц</th><th>Дата</th>'+KEYS.map(function(k){return '<th style="--rc:var('+ROWC[k]+')">'+LABEL[k]+'<small>'+UNIT[k]+'</small></th>'}).join('')+'</tr>';
+  $('tbt').textContent='Показания за '+y+' год';
+  $('tw').innerHTML='<table class="tb"><thead>'+head+'</thead><tbody>'+body+'</tbody></table>';
+}
+function renderAvgTable(){
   var y=pk(sel).y,sum={},cnt={},tot=0,nt=0,body='',i,dec={};
   KEYS.forEach(function(k){sum[k]=0;cnt[k]=0;dec[k]=UNIT[k]==='м³'?3:0});
   for(i=0;i<12;i++){
@@ -628,6 +658,7 @@ document.querySelectorAll('.tabs button').forEach(function(b){b.onclick=function
 $('prev').onclick=function(){var k=shift(sel,-1);if(pk(k).y>=YMIN){sel=k;render()}};
 $('next').onclick=function(){var k=shift(sel,1);if(pk(k).y<=YMAX){sel=k;render()}};
 $('msel').onchange=$('ysel').onchange=function(){sel=mk(+$('ysel').value,+$('msel').value);render()};
+document.querySelectorAll('#tbseg button').forEach(function(b){b.onclick=function(){tbmode=b.dataset.tb;renderTable()}});
 document.querySelectorAll('#seg button').forEach(function(b){b.onclick=function(){
   cmode=b.dataset.m;document.querySelectorAll('#seg button').forEach(function(x){x.setAttribute('aria-pressed',x===b)});drawChart()}});
 
@@ -814,11 +845,135 @@ function snapPrompt(){
    +'Правила: холодная вода (ХВС, синий) = cold; горячая (ГВС, красный) = hot. У электросчётчика смотри индикатор тарифа: T1 или «день» = day, T2 или «ночь» = night, не виден = electric. '
    +'Если барабан стоит между цифрами, есть блик или нечётко — ставь conf low и опиши в note. Если на фото нет счётчика — kind unknown и int пустая строка.';
 }
+/* распознавание на устройстве: фото -> текст (ML Kit) -> показание */
+var ocrSeq=0,ocrWait={};
+window.__ocrDone=function(id,res){var f=ocrWait[id];if(f){delete ocrWait[id];f(res)}};
+function fileToDataUrl(file,maxPx,filt){
+  return new Promise(function(res,rej){
+    var url=URL.createObjectURL(file),img=new Image();
+    img.onload=function(){
+      var w=img.naturalWidth,h=img.naturalHeight,sc=Math.min(1,maxPx/Math.max(w,h));
+      var c=document.createElement('canvas');c.width=Math.max(1,Math.round(w*sc));c.height=Math.max(1,Math.round(h*sc));
+      var x=c.getContext('2d');if(filt)x.filter=filt;x.drawImage(img,0,0,c.width,c.height);
+      URL.revokeObjectURL(url);
+      try{res(c.toDataURL('image/jpeg',0.92))}catch(e){rej(e)}
+    };
+    img.onerror=function(){URL.revokeObjectURL(url);rej(new Error('img'))};
+    img.src=url;
+  });
+}
+function ocrCall(dataUrl){
+  return new Promise(function(resolve,reject){
+    var id=String(++ocrSeq);ocrWait[id]=resolve;
+    setTimeout(function(){if(ocrWait[id]){delete ocrWait[id];reject(new Error('timeout'))}},30000);
+    try{AndroidBridge.ocr(dataUrl.split(',')[1],id)}catch(e){delete ocrWait[id];reject(e)}
+  });
+}
+function fixDigits(s){
+  var n=(s.match(/\d/g)||[]).length,l=(s.match(/[A-Za-zА-Яа-я]/g)||[]).length;
+  if(n>=3&&l<=3)return s.replace(/[OОоo]/g,'0').replace(/[lI|]/g,'1');
+  return s;
+}
+function ocrParse(lines){
+  var L=lines.map(function(l){return {t:fixDigits(String(l.t||'')),x:+l.x||0,y:+l.y||0,w:+l.w||0,h:+l.h||0}});
+  var all=L.map(function(l){return l.t}).join(' '),up=all.toUpperCase(),hint=null;
+  var cold=/ХВС|ХОЛОД|COLD/.test(up),hot=/ГВС|ГОРЯЧ|HOT/.test(up);
+  if(cold&&!hot)hint='cold';else if(hot&&!cold)hint='hot';
+  var t1=/Т1|T1|ДЕНЬ|DAY/.test(up),t2=/Т2|T2|НОЧЬ|NIGHT/.test(up);
+  if(t1&&!t2)hint='day';else if(t2&&!t1)hint='night';
+  var ups=up.replace(/[^0-9A-ZА-Я]/g,''),serialK=null,serialD=null;
+  KEYS.forEach(function(k){
+    var no=normSerial(S.meters&&S.meters[k]&&S.meters[k].no);
+    if(no.length>=4&&ups.indexOf(no)>=0){serialK=k;serialD=no.replace(/\D/g,'')}
+  });
+  var cands=[],fives=[];
+  function add(kind,v,partial,src){if(isFinite(v))cands.push({kind:kind,v:v,partial:!!partial,src:src})}
+  L.forEach(function(l){
+    var c=l.t.replace(/[\s ]/g,''),runs=c.match(/\d+(?:[.,]\d+)?/g)||[];
+    runs.forEach(function(r){
+      var d=r.replace(/\D/g,'');
+      if(serialD&&d===serialD)return;
+      if(/[.,]/.test(r)){
+        add('w',Number(r.replace(',','.')),false,r);add('e',Number(r.split(/[.,]/)[0]),false,r);return;
+      }
+      if(d.length===8)add('w',Number(d.slice(0,5)+'.'+d.slice(5)),false,d);
+      else if(d.length===7){add('e',Number(d.slice(0,6)),false,d);add('w',Number(d.slice(0,5)+'.'+d.slice(5)),true,d)}
+      else if(d.length===6)add('e',Number(d),false,d);
+      else if(d.length===5){add('w',Number(d),true,d);add('e',Number(d),false,d)}
+      else if(d.length===4)add('e',Number(d),false,d);
+    });
+    if(/^\d{5}$/.test(c))fives.push({l:l,c:c});
+  });
+  /* красные барабаны иногда читаются отдельной строкой справа от чёрных */
+  fives.forEach(function(a){
+    L.forEach(function(b){
+      var cb=b.t.replace(/[\s ]/g,'');
+      if(b===a.l||!/^\d{3}$/.test(cb))return;
+      var h=Math.max(a.l.h,1),dy=Math.abs((b.y+b.h/2)-(a.l.y+a.l.h/2));
+      if(dy<=h*0.8&&b.x>=a.l.x&&b.x-(a.l.x+a.l.w)<=h*3)add('w',Number(a.c+'.'+cb),false,'5+3');
+    });
+  });
+  return {cands:cands,hint:hint,serialK:serialK,text:all.replace(/\s+/g,' ').trim()};
+}
+function ocrPairs(P){
+  var keys=KEYS;
+  if(P.serialK)keys=[P.serialK];
+  else if(P.hint==='cold')keys=['hk','ht'];else if(P.hint==='hot')keys=['gk','gt'];
+  else if(P.hint==='day')keys=['ed'];else if(P.hint==='night')keys=['en'];
+  var out=[];
+  keys.forEach(function(k){
+    var f=snapInfo(k),kind=WATER[k]?'w':'e';
+    P.cands.forEach(function(c){
+      if(c.kind!==kind)return;
+      var v=kind==='w'?Math.round(c.v*1000)/1000:Math.round(c.v);
+      var lo=f.prev==null?null:(c.partial&&kind==='w'?Math.floor(f.prev):f.prev);
+      var ok=lo!=null&&v>=lo-1e-9&&v<=f.max;
+      out.push({k:k,v:v,f:f,ok:ok,partial:c.partial,dist:f.exp==null?1e9:Math.abs(v-f.exp)});
+    });
+  });
+  /* неполное чтение (только чёрные барабаны) отбрасываем, если есть полное с той же целой частью */
+  return out.filter(function(p){
+    return !p.partial||!out.some(function(q){return !q.partial&&q.k===p.k&&Math.floor(q.v)===Math.floor(p.v)});
+  });
+}
+function snapDoneOcr(P){
+  var pairs=ocrPairs(P),okp=pairs.filter(function(p){return p.ok}),raw='Распознано: «'+esc(P.text.slice(0,120))+'»';
+  if(!P.text){snapAsk('Цифры на фото не найдены','Снимите ближе, без бликов и при хорошем свете. Или введите показание вручную.',KEYS[0],null);return}
+  if(okp.length){
+    okp.sort(function(a,b){return a.dist-b.dist});
+    var best=okp[0],same=okp.every(function(p){return p.k===best.k&&Math.abs(p.v-best.v)<0.0005});
+    if(same&&!best.partial){snapAuto({best:best,serial:''});return}
+    snapAsk('Проверьте показание',(same?'Дробные барабаны прочитаны не полностью.':'Фото читается неоднозначно.')+' Показание подставлено, поправьте при необходимости.<br>'+raw,best.k,best.v,'');
+    return;
+  }
+  pairs.sort(function(a,b){return a.dist-b.dist});
+  var g=pairs[0];
+  if(g)snapAsk('Показание вне ожидаемого диапазона','Прочитано '+fmtV(g.k,g.v)+' для «'+esc(LABEL[g.k])+'», это меньше прошлого или слишком много. Проверьте цифры.<br>'+raw,g.k,g.v,'');
+  else snapAsk('Не удалось определить счётчик','В тексте нет подходящих чисел. Введите счётчик и показание вручную.<br>'+raw,KEYS[0],null);
+}
+function snapRunOcr(file,fail){
+  snapBusy=true;$('snap').classList.add('busy');
+  Promise.all([fileToDataUrl(file,2000,''),fileToDataUrl(file,2000,'grayscale(1) contrast(1.8)')])
+  .then(function(u){return Promise.all(u.map(function(x){return ocrCall(x).catch(function(){return null})}))})
+  .then(function(rs){
+    var lines=[],err=null;
+    rs.forEach(function(r){if(r&&r.lines)lines=lines.concat(r.lines);else if(r&&r.error)err=r.error});
+    if(!lines.length){
+      if(err)snapAsk('Ошибка распознавания ('+esc(err)+')','Введите счётчик и показание вручную.',KEYS[0],null);
+      else snapAsk('Цифры на фото не найдены','Снимите ближе, без бликов и при хорошем свете. Или введите показание вручную.',KEYS[0],null);
+      return;
+    }
+    snapDoneOcr(ocrParse(lines));
+  })
+  .catch(function(){fail('Не удалось обработать фото')})
+  .then(function(){snapBusy=false;$('snap').classList.remove('busy')});
+}
 function snapRun(file){
   if(snapUrl){try{URL.revokeObjectURL(snapUrl)}catch(e){}}
   try{snapUrl=URL.createObjectURL(file)}catch(e){snapUrl=null}
   snapShow('','Распознаю счётчик…','Обычно 5–20 секунд.');
   var fail=function(msg){snapAsk(msg,'Введите счётчик и показание вручную — я проверю их по прошлому периоду.',KEYS[0],null)};
+  if(window.AndroidBridge&&AndroidBridge.ocr){snapRunOcr(file,fail);return}
   if(!window.claude||!window.claude.use){fail('Автоматическое распознавание здесь недоступно');return}
   snapBusy=true;$('snap').classList.add('busy');
   window.claude.use('sample').then(function(sample){
@@ -834,7 +989,7 @@ function snapRun(file){
     var c=e&&e.code,m='Не удалось распознать фото';
     if(c==='none'||c==='images_unavailable'||c==='not_granted'||c==='sampling_disabled'||c==='capability_disabled'||c==='not_declared')m='Распознавание фото недоступно в этом окне';
     else if(c==='rate_limited')m='Лимит распознаваний исчерпан, попробуйте позже';
-    fail(m);
+    fail(m+(c?' (код: '+c+')':''));
   }).then(function(){snapBusy=false;$('snap').classList.remove('busy')});
 }
 ['snapf','snapg'].forEach(function(id){$(id).addEventListener('change',function(){
