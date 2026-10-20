@@ -178,6 +178,13 @@ table.tb{border-collapse:collapse;min-width:600px;width:100%;font-size:13px}
 .camb{display:flex;gap:10px;padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));background:#000}
 .camb button{flex:1;border:0;border-radius:14px;padding:16px;font-size:18px;font-weight:800;background:#fff;color:#14202B}
 .camb button.g{background:#2b3640;color:#fff;font-weight:500;flex:.6}
+.seg button[data-m]{transition:opacity .15s}
+.seg button[data-m="wat"]{background:linear-gradient(135deg,#E53935 0%,#1E5FD8 100%);color:#fff;border-color:transparent;font-weight:700}
+.seg button[data-m="ee"]{background:#F5C232;color:#14202B;border-color:transparent;font-weight:700}
+.seg button[data-m="pay"]{background:none;color:var(--mut);border-color:var(--ln);font-weight:500}
+.seg button[data-m="pay"][aria-pressed="true"]{background:linear-gradient(135deg,var(--g1),var(--g2));color:#fff;border-color:transparent;font-weight:700}
+.seg button[data-m][aria-pressed="false"]{opacity:.85}
+.seg button[data-m][aria-pressed="true"]{opacity:1;box-shadow:0 0 0 2px var(--sf),0 0 0 4px var(--ink)}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -220,9 +227,9 @@ table.tb{border-collapse:collapse;min-width:600px;width:100%;font-size:13px}
 
   <section id="s-ch" hidden>
     <div class="seg" id="seg">
-      <button data-m="pay" aria-pressed="true">Платежи</button>
-      <button data-m="wat" aria-pressed="false">Вода</button>
+      <button data-m="wat" aria-pressed="true">Вода</button>
       <button data-m="ee" aria-pressed="false">Свет</button>
+      <button data-m="pay" aria-pressed="false">Платежи</button>
     </div>
     <div class="cscroll"><div class="chart" id="cw"><canvas id="cv"></canvas></div></div>
     <div class="sum" id="sum"></div>
@@ -319,7 +326,7 @@ var money=function(v){return nf(v,2)+' ₽'};
 var esc=function(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})};
 
 /* ---------- состояние ---------- */
-var YMIN=2026,YMAX=2036,S,sel,tab='in',cmode='pay',chart=null,resetArmed=false;
+var YMIN=2026,YMAX=2036,S,sel,tab='in',cmode='wat',chart=null,resetArmed=false;
 function load(){
   try{var r=localStorage.getItem(STORE);if(r){var o=JSON.parse(r);if(o&&o.ver&&o.ver.length&&o.m){o.ver.forEach(migTf);return o}}}catch(e){}
   return defaults();
