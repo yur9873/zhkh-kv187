@@ -185,11 +185,16 @@ table.tb{border-collapse:collapse;min-width:600px;width:100%;font-size:13px}
 .seg button[data-m="pay"][aria-pressed="true"]{background:linear-gradient(135deg,var(--g1),var(--g2));color:#fff;border-color:transparent;font-weight:700}
 .seg button[data-m][aria-pressed="false"]{opacity:.85}
 .seg button[data-m][aria-pressed="true"]{opacity:1;box-shadow:0 0 0 2px var(--sf),0 0 0 4px var(--ink)}
+.camhint{position:absolute;top:0;left:0;right:0;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;background:linear-gradient(rgba(0,0,0,.65),transparent);color:#fff;font-size:14px;text-align:center}
+.camb button#camtorch{flex:.9;background:#2b3640;color:#fff;font-weight:600;font-size:15px}
+.camb button#camtorch.on{background:#F5C232;color:#14202B}
+.snapres .sb label{flex:1;text-align:center;border-radius:12px;padding:11px;font-weight:700;background:linear-gradient(135deg,var(--g1),var(--g2));color:#fff;cursor:pointer}
+.snapres .sb label.g{background:none;border:1px solid var(--ln);color:var(--mut);font-weight:500}
 [hidden]{display:none!important}
 </style>
 </head>
 <body>
-<div class="cam" id="cam" hidden><video id="camv" playsinline autoplay muted></video><div class="camb"><button type="button" id="camshot">Снять</button><button type="button" class="g" id="camx">Закрыть</button></div></div>
+<div class="cam" id="cam" hidden><video id="camv" playsinline autoplay muted></video><div class="camhint">Наведите камеру на цифры счётчика так, чтобы они были крупно и в фокусе</div><div class="camb"><button type="button" id="camtorch" hidden>🔦 Фонарик</button><button type="button" id="camshot">Снять</button><button type="button" class="g" id="camx">Закрыть</button></div></div>
 <main>
   <div class="top">
     <label class="snap" id="snap" for="snapf"><i>📷</i>СНИМАЮ</label>
@@ -935,12 +940,13 @@ function ocrPairs(P){
       var v=kind==='w'?Math.round(c.v*1000)/1000:Math.round(c.v);
       var lo=f.prev==null?null:(c.partial&&kind==='w'?Math.floor(f.prev):f.prev);
       var ok=lo!=null&&v>=lo-1e-9&&v<=f.max;
-      out.push({k:k,v:v,f:f,ok:ok,partial:c.partial,dist:f.exp==null?1e9:Math.abs(v-f.exp)});
+      out.push({k:k,v:v,f:f,ok:ok,partial:c.partial,crop:!!c.crop,dist:f.exp==null?1e9:Math.abs(v-f.exp)});
     });
   });
   /* неполное чтение (только чёрные барабаны) отбрасываем, если есть полное с той же целой частью */
-  return out.filter(function(p){
-    return !p.partial||!out.some(function(q){return !q.partial&&q.k===p.k&&Math.floor(q.v)===Math.floor(p.v)});
+  var kept=out.filter(function(p){return p.crop||!out.some(function(q){return q.crop&&q.k===p.k&&Math.floor(q.v)===Math.floor(p.v)})});
+  return kept.filter(function(p){
+    return !p.partial||!kept.some(function(q){return !q.partial&&q.k===p.k&&Math.floor(q.v)===Math.floor(p.v)});
   });
 }
 function snapDoneOcr(P){
@@ -950,7 +956,8 @@ function snapDoneOcr(P){
     okp.sort(function(a,b){return a.dist-b.dist});
     var best=okp[0],same=okp.every(function(p){return p.k===best.k&&Math.abs(p.v-best.v)<0.0005});
     if(same&&!best.partial){snapAuto({best:best,serial:''});return}
-    snapAsk('Проверьте показание',(same?'Дробные барабаны прочитаны не полностью.':'Фото читается неоднозначно.')+' Показание подставлено, поправьте при необходимости.<br>'+raw,best.k,best.v,'');
+    snapAsk('Проверьте показание',(same?'Красные барабаны (три цифры после запятой) не прочитаны. Впишите их.':'Фото читается неоднозначно. Показание подставлено, поправьте при необходимости.')+'<br>'+raw,best.k,best.v,'');
+    if(same&&best.partial&&WATER[best.k]){var iv=$('sav');if(iv){iv.value=fv(best.v)+',';if(iv.focus)iv.focus()}}
     return;
   }
   pairs.sort(function(a,b){return a.dist-b.dist});
@@ -958,22 +965,82 @@ function snapDoneOcr(P){
   if(g)snapAsk('Показание вне ожидаемого диапазона','Прочитано '+fmtV(g.k,g.v)+' для «'+esc(LABEL[g.k])+'», это меньше прошлого или слишком много. Проверьте цифры.<br>'+raw,g.k,g.v,'');
   else snapAsk('Не удалось определить счётчик','В тексте нет подходящих чисел. Введите счётчик и показание вручную.<br>'+raw,KEYS[0],null);
 }
+function loadImg(file){
+  return new Promise(function(res,rej){
+    var url=URL.createObjectURL(file),img=new Image();
+    img.onload=function(){res({img:img,url:url})};
+    img.onerror=function(){URL.revokeObjectURL(url);rej(new Error('img'))};
+    img.src=url;
+  });
+}
+/* вырезка (sx,sy,sw,sh) из картинки, масштаб под maxW x maxH, при minH — увеличение мелкого фрагмента */
+function canvasOf(img,sx,sy,sw,sh,maxW,maxH,filt,minH){
+  var sc=Math.min(maxW/sw,maxH/sh,1);
+  if(minH&&sh*sc<minH)sc=Math.min(minH/sh,maxW/sw,8);
+  var c=document.createElement('canvas');c.width=Math.max(8,Math.round(sw*sc));c.height=Math.max(8,Math.round(sh*sc));
+  var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
+  if(filt)x.filter=filt;
+  x.drawImage(img,sx,sy,sw,sh,0,0,c.width,c.height);
+  return c.toDataURL('image/jpeg',0.92);
+}
+var OCR_VARS=['','grayscale(1) contrast(1.8)','grayscale(1) contrast(1.8) invert(1)'];
+/* строки с чёрными барабанами, у которых целая часть похожа на показание воды: рядом ищем три красные цифры */
+function redJobs(lines){
+  var jobs=[],seen={};
+  lines.forEach(function(l){
+    var c=fixDigits(String(l.t||'')).replace(/[\s ]/g,'');
+    if(!/^\d{5,8}$/.test(c)||!l.w||!l.h)return;
+    var ip=Number(c.slice(0,5));
+    var ok=KEYS.some(function(k){if(!WATER[k])return false;var f=snapInfo(k);return f.prev!=null&&ip>=Math.floor(f.prev)&&ip<=f.max});
+    if(!ok||seen[ip])return;seen[ip]=1;
+    jobs.push({ip:ip,len:c.length,x:l.x,y:l.y,w:l.w,h:l.h});
+  });
+  return jobs.slice(0,2);
+}
+function readRed(img,W,H,sc1,j){
+  var unit=j.w/j.len;
+  var x0=Math.max(0,(j.x+unit*5-unit*0.2)/sc1),y0=Math.max(0,(j.y-j.h*0.3)/sc1);
+  var cw=Math.min(unit*3.8/sc1,W-x0),ch=Math.min(j.h*1.6/sc1,H-y0);
+  if(cw<8||ch<8)return Promise.resolve(null);
+  return Promise.all(OCR_VARS.concat(['grayscale(1) contrast(2.8) brightness(1.2)','grayscale(1) contrast(2.8) invert(1)','contrast(2.2) saturate(0.2)']).map(function(f){return ocrCall(canvasOf(img,x0,y0,cw,ch,900,400,f,220)).catch(function(){return null})})).then(function(rs){
+    var votes={};
+    rs.forEach(function(r){
+      if(!r||!r.lines)return;
+      var d=r.lines.map(function(l){return fixDigits(String(l.t||''))}).join('').replace(/\D/g,'');
+      if(d.length<3||d.length>4)return;
+      var s=d.length===4?d.slice(1):d;
+      votes[s]=(votes[s]||0)+1;
+    });
+    var ks=Object.keys(votes);if(!ks.length)return null;
+    var top=Math.max.apply(null,ks.map(function(s){return votes[s]}));
+    return ks.filter(function(s){return votes[s]===top}).map(function(s){return {kind:'w',v:Number(j.ip+'.'+s),partial:false,src:'crop',crop:true}});
+  });
+}
 function snapRunOcr(file,fail){
   snapBusy=true;$('snap').classList.add('busy');
-  Promise.all([fileToDataUrl(file,2000,''),fileToDataUrl(file,2000,'grayscale(1) contrast(1.8)')])
-  .then(function(u){return Promise.all(u.map(function(x){return ocrCall(x).catch(function(){return null})}))})
-  .then(function(rs){
-    var lines=[],err=null;
-    rs.forEach(function(r){if(r&&r.lines)lines=lines.concat(r.lines);else if(r&&r.error)err=r.error});
-    if(!lines.length){
-      if(err)snapAsk('Ошибка распознавания ('+esc(err)+')','Введите счётчик и показание вручную.',KEYS[0],null);
-      else snapAsk('Цифры на фото не найдены','Снимите ближе, без бликов и при хорошем свете. Или введите показание вручную.',KEYS[0],null);
-      return;
-    }
-    snapDoneOcr(ocrParse(lines));
+  var im=null;
+  loadImg(file).then(function(o){
+    im=o;var W=o.img.naturalWidth,H=o.img.naturalHeight,sc1=Math.min(1,2000/Math.max(W,H));
+    return Promise.all(OCR_VARS.map(function(f){return ocrCall(canvasOf(o.img,0,0,W,H,2000,2000,f,0)).catch(function(){return null})})).then(function(rs){
+      var lines=[],err=null;
+      rs.forEach(function(r){if(r&&r.lines)lines=lines.concat(r.lines);else if(r&&r.error)err=r.error});
+      if(!lines.length){
+        if(err)snapAsk('Ошибка распознавания ('+esc(err)+')','Введите счётчик и показание вручную.',KEYS[0],null);
+        else snapAsk('Цифры на фото не найдены','Снимите ближе, без бликов и при хорошем свете. Или введите показание вручную.',KEYS[0],null);
+        return null;
+      }
+      var P=ocrParse(lines),jobs=redJobs(lines);
+      if(!jobs.length)return P;
+      snapShow('','Читаю красные барабаны…','Ещё несколько секунд.');
+      return Promise.all(jobs.map(function(j){return readRed(o.img,W,H,sc1,j)})).then(function(res){
+        res.forEach(function(r){if(r)r.forEach(function(x){P.cands.push(x)})});
+        return P;
+      });
+    });
   })
+  .then(function(P){if(P)snapDoneOcr(P)})
   .catch(function(){fail('Не удалось обработать фото')})
-  .then(function(){snapBusy=false;$('snap').classList.remove('busy')});
+  .then(function(){if(im){try{URL.revokeObjectURL(im.url)}catch(e){}}snapBusy=false;$('snap').classList.remove('busy')});
 }
 function snapRun(file){
   if(snapUrl){try{URL.revokeObjectURL(snapUrl)}catch(e){}}
@@ -1002,26 +1069,55 @@ function snapRun(file){
 ['snapf','snapg'].forEach(function(id){$(id).addEventListener('change',function(){
   var f=this.files&&this.files[0];this.value='';if(f&&!snapBusy)snapRun(f);
 })});
-/* камера прямо в окне (запасной вариант) */
-var camStream=null;
-function camStop(){if(camStream){camStream.getTracks().forEach(function(t){t.stop()});camStream=null}$('cam').hidden=true}
+/* камера прямо в окне: с фонариком, который остаётся включённым до снимка */
+var camStream=null,camTrack=null,camTorchOn=false;
+function torchPref(){try{return localStorage.getItem('zhkh-torch')!=='0'}catch(e){return true}}
+function setTorch(on){
+  camTorchOn=on;
+  var b=$('camtorch');b.classList.toggle('on',on);b.textContent=on?'🔦 Фонарик вкл.':'🔦 Фонарик выкл.';
+  if(camTrack&&camTrack.applyConstraints){try{camTrack.applyConstraints({advanced:[{torch:on}]}).catch(function(){})}catch(e){}}
+}
+function camStop(){
+  if(camStream){camStream.getTracks().forEach(function(t){t.stop()});camStream=null}
+  camTrack=null;$('cam').hidden=true;
+}
+function camFallback(msg){
+  snapShow('warn',msg,'Можно снять системной камерой: включите фонарик в шторке телефона и нажмите кнопку ниже.','<div class="sb"><label for="snapf">Системная камера</label><label class="g" for="snapg">Из галереи</label></div>');
+}
 function camOpen(){
   var md=navigator.mediaDevices;
-  if(!md||!md.getUserMedia){snapShow('warn','Камера в окне недоступна','Нажмите «Фото из галереи» — там есть пункт «Камера».');return}
-  md.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false}).then(function(st){
-    camStream=st;var v=$('camv');v.srcObject=st;$('cam').hidden=false;
+  if(!md||!md.getUserMedia){camFallback('Камера в окне недоступна');return}
+  md.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:3840},height:{ideal:2160}},audio:false}).then(function(st){
+    camStream=st;camTrack=st.getVideoTracks()[0];
+    var v=$('camv');v.srcObject=st;$('cam').hidden=false;
     var p=v.play&&v.play();if(p&&p.catch)p.catch(function(){});
-  }).catch(function(){snapShow('warn','Доступ к камере закрыт','Разрешите камеру для этой страницы или нажмите «Фото из галереи» и выберите «Камера».')});
+    var caps={};try{caps=camTrack.getCapabilities?camTrack.getCapabilities():{}}catch(e){}
+    var tb=$('camtorch');
+    if(caps&&caps.torch){tb.hidden=false;setTorch(torchPref());setTimeout(function(){setTorch(camTorchOn)},500)}
+    else tb.hidden=true;
+    if(caps&&caps.focusMode&&caps.focusMode.indexOf&&caps.focusMode.indexOf('continuous')>=0){
+      try{camTrack.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(function(){})}catch(e){}
+    }
+  }).catch(function(){camFallback('Не удалось открыть камеру в окне')});
 }
 $('camopen').addEventListener('click',camOpen);
 $('camx').addEventListener('click',camStop);
+$('camtorch').addEventListener('click',function(){
+  setTorch(!camTorchOn);
+  try{localStorage.setItem('zhkh-torch',camTorchOn?'1':'0')}catch(e){}
+});
 $('camshot').addEventListener('click',function(){
   var v=$('camv'),w=v.videoWidth,h=v.videoHeight;if(!w||!h)return;
-  var sc=Math.min(1,1600/Math.max(w,h)),c=document.createElement('canvas');c.width=Math.round(w*sc);c.height=Math.round(h*sc);
-  c.getContext('2d').drawImage(v,0,0,c.width,c.height);
-  c.toBlob(function(b){camStop();if(b)snapRun(b)},'image/jpeg',0.9);
+  var c=document.createElement('canvas');c.width=w;c.height=h;
+  c.getContext('2d').drawImage(v,0,0,w,h);
+  c.toBlob(function(b){camStop();if(b)snapRun(b)},'image/jpeg',0.95);
 });
-
+/* в приложении СНИМАЮ сразу открывает камеру с фонариком */
+$('snap').addEventListener('click',function(e){
+  if(window.AndroidBridge&&navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){
+    e.preventDefault();if(!snapBusy)camOpen();
+  }
+});
 $('snapres').addEventListener('change',function(e){if(e.target.id==='sak')snapHint()});
 $('snapres').addEventListener('click',function(e){
   var a=e.target.dataset&&e.target.dataset.sa;if(!a)return;
