@@ -896,7 +896,7 @@ function ocrParse(lines){
   var ups=up.replace(/[^0-9A-ZА-Я]/g,''),serialK=null,serialD=null;
   KEYS.forEach(function(k){
     var no=normSerial(S.meters&&S.meters[k]&&S.meters[k].no);
-    if(no.length>=4&&ups.indexOf(no)>=0){serialK=k;serialD=no.replace(/\D/g,'')}
+    if(no.length>=4&&ups.indexOf(no)>=0){serialK=(serialK==null&&!serialD)?k:(serialD===no.replace(/\D/g,'')?null:serialK);serialD=no.replace(/\D/g,'')}
   });
   var cands=[],fives=[];
   function add(kind,v,partial,src){if(isFinite(v))cands.push({kind:kind,v:v,partial:!!partial,src:src})}
@@ -1320,7 +1320,17 @@ function initSync(){
     }).catch(function(){});
   }catch(e){}
 }
-S=load();S.t=S.t||0;S.meters=S.meters||{};sel=initSel();
+S=load();S.t=S.t||0;S.meters=S.meters||{};
+/* номера счётчиков и даты поверки (из таблицы владельца); заполняются только в пустые поля */
+(function(){
+  var P={hk:['09040308','2027-09-09'],gk:['09049457','2029-08-13'],ht:['09040301','2027-09-09'],gt:['09049442','2029-08-13'],ed:['021251244231','2028-10-21'],en:['021251244231','2028-10-21']},ch=false;
+  Object.keys(P).forEach(function(k){
+    var m=S.meters[k]=S.meters[k]||{no:'',vd:''};
+    if(!m.no){m.no=P[k][0];ch=true}
+    if(!m.vd){m.vd=P[k][1];ch=true}
+  });
+  if(ch){try{save()}catch(e){}}
+})();sel=initSel();
 YMIN=Math.min(2026,Math.min.apply(null,Object.keys(S.m).map(function(k){return pk(k).y})));
 YMAX=Math.max(new Date().getFullYear()+10,pk(sel).y);
 $('msel').innerHTML=MN.map(function(n,i){return '<option value="'+i+'">'+n+'</option>'}).join('');
