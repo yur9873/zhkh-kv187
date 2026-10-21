@@ -190,6 +190,7 @@ table.tb{border-collapse:collapse;min-width:600px;width:100%;font-size:13px}
 .camb button#camtorch.on{background:#F5C232;color:#14202B}
 .snapres .sb label{flex:1;text-align:center;border-radius:12px;padding:11px;font-weight:700;background:linear-gradient(135deg,var(--g1),var(--g2));color:#fff;cursor:pointer}
 .snapres .sb label.g{background:none;border:1px solid var(--ln);color:var(--mut);font-weight:500}
+.snapres img.scrop{display:block;width:100%;height:auto;max-height:100px;object-fit:contain;margin:8px 0 0;border-radius:10px;background:#fff;flex:none}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -817,9 +818,10 @@ function snapNote(b){
   if(f.avg!=null)s+=' · обычно в месяц '+nf(f.avg,WATER[b.k]?2:0)+' · ожидаем около '+fmtV(b.k,f.exp);
   return s;
 }
+var snapCrop=null;
 function snapShow(cls,title,desc,extra){
   var el=$('snapres');el.hidden=false;el.className='snapres'+(cls?' '+cls:'');
-  el.innerHTML='<div class="sh">'+(snapUrl?'<img alt="" src="'+snapUrl+'">':'')+'<div><div class="st">'+title+'</div><div class="sd">'+(desc||'')+'</div></div></div>'+(extra||'');
+  el.innerHTML='<div class="sh">'+(snapUrl?'<img alt="" src="'+snapUrl+'">':'')+'<div><div class="st">'+title+'</div><div class="sd">'+(desc||'')+'</div></div></div>'+(snapCrop?'<img class="scrop" alt="" src="'+snapCrop+'">':'')+(extra||'');
 }
 function snapApply(k,v,serial){
   var m=(S.m[sel]=S.m[sel]||{});m.cur=m.cur||{};
@@ -1059,21 +1061,41 @@ function findStrip(img){
     comps.push({a:a,x0:x0,x1:x1,y0:y0,y1:y1});
   }
   if(!comps.length)return null;
-  var big=comps.reduce(function(u,v){return v.a>u.a?v:u});
-  var bh=big.y1-big.y0+1,bcy=(big.y0+big.y1)/2;
-  var G=comps.filter(function(c){
-    var ch=c.y1-c.y0+1,cy=(c.y0+c.y1)/2;
-    return c.a>=big.a*0.12&&ch>=bh*0.45&&ch<=bh*1.5&&Math.abs(cy-bcy)<=bh*0.7;
-  }).sort(function(u,v){return v.a-u.a}).slice(0,3).sort(function(u,v){return u.x0-v.x0});
-  if(G.length<3)return null;
-  var cx=G.map(function(c){return (c.x0+c.x1)/2}),pitch=(cx[2]-cx[0])/2;
-  var hh=Math.max.apply(null,G.map(function(c){return c.y1-c.y0+1})),
-      cy=G.reduce(function(t,c){return t+(c.y0+c.y1)/2},0)/3;
-  if(pitch<8||Math.abs((cx[1]-cx[0])-(cx[2]-cx[1]))>pitch*0.45||hh<pitch*0.6||hh>pitch*2.2)return null;
+  var cand=comps.filter(function(c){
+    var cw=c.x1-c.x0+1,ch=c.y1-c.y0+1,fill=c.a/(cw*ch);
+    return ch>=h*0.015&&ch<=h*0.25&&cw/ch>=0.25&&cw/ch<=1.3&&fill>=0.07&&fill<=0.62&&c.x0>0&&c.y0>0&&c.x1<w-1&&c.y1<h-1;
+  }).map(function(c){c.cx=(c.x0+c.x1)/2;c.cy=(c.y0+c.y1)/2;c.ch=c.y1-c.y0+1;return c});
+  /* осколки (низ/верх соседней цифры) вокруг: объединяем всё, что лежит в одной ячейке */
+  var loose=comps.filter(function(c){return c.a>=6&&c.y1-c.y0<h*0.3});
+  function cellAt(cxp,cyp,ch0,pp){
+    var inn=loose.filter(function(c){var mx=(c.x0+c.x1)/2,my=(c.y0+c.y1)/2;return Math.abs(mx-cxp)<=pp*0.42&&Math.abs(my-cyp)<=ch0*1.0});
+    if(!inn.length)return null;
+    var u={a:0,x0:w,x1:0,y0:h,y1:0};
+    inn.forEach(function(c){u.a+=c.a;u.x0=Math.min(u.x0,c.x0);u.x1=Math.max(u.x1,c.x1);u.y0=Math.min(u.y0,c.y0);u.y1=Math.max(u.y1,c.y1)});
+    return u;
+  }
+  var best=null,bs=-1,ia,ib;
+  for(ia=0;ia<cand.length;ia++)for(ib=0;ib<cand.length;ib++){
+    var A=cand[ia],B=cand[ib],pp=B.cx-A.cx,rt=A.ch/B.ch;
+    if(pp<A.ch*0.45||pp>A.ch*2.4||rt<0.75||rt>1.33||Math.abs(A.cy-B.cy)>A.ch*0.45)continue;
+    var hm=(A.ch+B.ch)/2,cym=(A.cy+B.cy)/2,sc=A.a+B.a,C=cellAt(B.cx+pp,cym,hm,pp),mode=1;
+    if(!C){C=cellAt(A.cx-pp,cym,hm,pp);mode=-1}
+    if(!C)continue;
+    sc+=C.a;
+    /* слева должно быть место под пять чёрных барабанов */
+    var left=(mode===1?A.cx:C.x0/1+0)-(mode===1?0:0);
+    var firstCx=mode===1?A.cx:(C.x0+C.x1)/2;
+    if(firstCx-5.5*pp<-pp*0.3)continue;
+    if(sc>bs){bs=sc;best={G:mode===1?[A,B,C]:[C,A,B],pitch:pp,hh:hm,cy:cym}}
+  }
+  if(!best)return null;
+  var G=best.G,pitch=best.pitch,hh=best.hh,cy=best.cy;
+  var cx=G.map(function(c){return (c.x0+c.x1)/2});
+  cx=[cx[0],cx[0]+pitch,cx[0]+2*pitch];
   var red=cx.map(function(v){return v/s}),black=[];
   for(i=5;i>=1;i--)black.push((cx[0]-i*pitch)/s);
   if(black[0]-pitch/s*0.5<-pitch/s*0.2)return null; /* слева не хватает места под 5 чёрных барабанов */
-  return {p:pitch/s,cy:cy/s,h:hh/s,red:red,black:black,W:W,H:H,rb:G.map(function(c){return [c.y0/s,c.y1/s]})};
+  return {p:pitch/s,cy:cy/s,h:hh/s,red:red,black:black,W:W,H:H,rb:G.map(function(c){return [Math.min(c.y0,cy-hh/2)/s,Math.max(c.y1,cy+hh/2)/s]})};
 }
 /* вырезка ячейки или группы, на белом поле с отступом; mode: 'red0' — красные цифры → тёмные */
 function stripCanvas(img,x0,x1,cy,hh,filt,mode){
@@ -1117,7 +1139,7 @@ function stripRead(img,S0){
       var j=jobs[idx];
       if(j.len===1){
         if(d.length===1)vote[j.pos][d]=(vote[j.pos][d]||0)+1;
-        else if(d.length===2){ /* лишний кусок соседнего барабана: берём цифру, чаще встречающуюся по ячейкам, позже */ }
+        else if(d.length===2&&j.pos===7){vote[7][d[0]]=(vote[7][d[0]]||0)+0.5;vote[7][d[1]]=(vote[7][d[1]]||0)+0.5}
       }else{
         if(d.length<j.len&&d.length>=j.len-2&&j.pos===0)d=('00000'+d).slice(-5);
         if(d.length!==j.len)return;
@@ -1130,26 +1152,28 @@ function stripRead(img,S0){
       var t=v[ks[0]],tops=ks.filter(function(k){return v[k]>=t-0.01});
       return {o:tops.slice(0,2),sure:tops.length===1&&t>=2};
     }
-    var tp=vote.map(top),any=tp.some(function(x){return x.o.length}),i2;
+    var tp=vote.map(top);
+    /* последний красный барабан крутится: между двумя соседними цифрами берём меньшую (показание ещё не дошло до следующей) */
+    (function(){var o=tp[7].o;if(o.length===2){var a=+o[0],b=+o[1];if((a+1)%10===b)tp[7]={o:[o[0]],sure:true};else if((b+1)%10===a)tp[7]={o:[o[1]],sure:true}}})();
+    var any=tp.some(function(x){return x.o.length}),i2;
     if(!any)return null;
     /* целая часть: если чёрные барабаны прочитаны не уверенно, подбираем целое из допустимого диапазона (от прошлого показания) */
-    var ips=[],ipSure=tp.slice(0,5).every(function(x){return x.sure});
-    if(ipSure)ips=[tp.slice(0,5).map(function(x){return x.o[0]}).join('')];
-    else{
-      var seen={},best=0,list=[];
-      if(typeof KEYS!=='undefined')KEYS.forEach(function(k){
-        if(!WATER[k])return;var f=snapInfo(k);if(f.prev==null)return;
-        for(var n=Math.floor(f.prev);n<=Math.floor(f.max)&&n-Math.floor(f.prev)<60;n++){
-          if(seen[n])continue;seen[n]=1;
-          var d5=('00000'+n).slice(-5),sc=0;
-          for(i2=0;i2<5;i2++)sc+=vote[i2][d5[i2]]||0;
-          list.push({d:d5,sc:sc});
-        }
-      });
-      list.forEach(function(x){if(x.sc>best)best=x.sc});
-      if(best>=2)ips=list.filter(function(x){return x.sc===best}).map(function(x){return x.d}).slice(0,3);
-      else if(tp.slice(0,5).every(function(x){return x.o.length}))ips=[tp.slice(0,5).map(function(x){return x.o[0]}).join('')];
-    }
+    var ips=[],ipSure=tp.slice(0,5).every(function(x){return x.sure}),readIp=tp.slice(0,5).map(function(x){return x.o[0]||'_'}).join('');
+    var seen={},best=0,list=[];
+    if(typeof KEYS!=='undefined')KEYS.forEach(function(k){
+      if(!WATER[k])return;var f=snapInfo(k);if(f.prev==null)return;
+      for(var n=Math.floor(f.prev);n<=Math.floor(f.max)&&n-Math.floor(f.prev)<60;n++){
+        if(seen[n])continue;seen[n]=1;
+        var d5=('00000'+n).slice(-5),sc=0;
+        for(i2=0;i2<5;i2++)sc+=vote[i2][d5[i2]]||0;
+        list.push({d:d5,sc:sc});
+      }
+    });
+    list.forEach(function(x){if(x.sc>best)best=x.sc});
+    var inRange=list.some(function(x){return x.d===readIp});
+    if(ipSure&&inRange)ips=[readIp];
+    else if(best>=3||(!ipSure&&best>=2))ips=list.filter(function(x){return x.sc===best}).map(function(x){return x.d}).slice(0,3);
+    else if(readIp.indexOf('_')<0)ips=[readIp];
     var redOk=tp.slice(5).every(function(x){return x.o.length}),redSure=tp.slice(5).every(function(x){return x.sure}),dec=[''];
     if(redOk)tp.slice(5).forEach(function(x){var nx=[];dec.forEach(function(c){x.o.forEach(function(o){if(nx.length<4)nx.push(c+o)})});dec=nx});
     var cands=[];
@@ -1175,6 +1199,7 @@ function legacyRun(o,sr){
       }
       var P=ocrParse(lines),jobs=redJobs(lines);
       if(sr)sr.cands.forEach(function(x){P.cands.push(x)});
+      if(sr&&sr.text)P.text='барабаны '+sr.text;
       if(!jobs.length||(sr&&sr.cands.some(function(x){return x.crop})))return P;
       snapShow('','Читаю красные барабаны…','Ещё несколько секунд.');
       return Promise.all(jobs.map(function(j){return readRed(o.img,W,H,sc1,j)})).then(function(res){
@@ -1190,6 +1215,7 @@ function snapRunOcr(file,fail){
     im=o;
     var st=null;try{st=findStrip(o.img)}catch(e){}
     if(!st)return legacyRun(o,null);
+    try{snapCrop=stripCanvas(o.img,st.black[0]-st.p*0.7,st.red[2]+st.p*0.7,st.cy,st.h*0.9,'',null)}catch(e){snapCrop=null}
     snapShow('','Читаю барабаны счётчика…','Ещё несколько секунд.');
     return stripRead(o.img,st).catch(function(){return null}).then(function(sr){
       if(sr&&sr.sure)return {cands:sr.cands,hint:null,serialK:null,text:'барабаны '+sr.text};
@@ -1203,6 +1229,7 @@ function snapRunOcr(file,fail){
 function snapRun(file){
   if(snapUrl){try{URL.revokeObjectURL(snapUrl)}catch(e){}}
   try{snapUrl=URL.createObjectURL(file)}catch(e){snapUrl=null}
+  snapCrop=null;
   snapShow('','Распознаю счётчик…','Обычно 5–20 секунд.');
   var fail=function(msg){snapAsk(msg,'Введите счётчик и показание вручную — я проверю их по прошлому периоду.',KEYS[0],null)};
   if(window.AndroidBridge&&AndroidBridge.ocr){snapRunOcr(file,fail);return}
